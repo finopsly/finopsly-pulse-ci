@@ -10,19 +10,20 @@ inputs:
   token:
     description: >
       GitHub token with contents:read on the target releases repo.
-      REQUIRED while finopsly/finopsly-cli is private — the default (github.token)
-      is scoped only to the calling workflow's own repo and CANNOT read a
-      different private repo, so it will fail unless you pass a real token here.
-      Only safe to omit once finopsly-cli is made public.
+      finopsly-pulse-cli (the default repo, stable releases) is public, so
+      the default (github.token) works fine there. REQUIRED if you override
+      repo to finopsly-pulse-cli-internal (beta/pre-release tags) — that repo
+      is private, and github.token is scoped only to the calling workflow's
+      own repo, so it cannot read a different private repo.
     required: false
     default: ${{ github.token }}
   repo:
     description: >
-      Override the releases repo — e.g. to test against a fork. Defaults to
-      finopsly-cli, which is also where beta/pre-release tags are published
-      (there is no separate internal-only releases repo).
+      Override the releases repo — e.g. finopsly-pulse-cli-internal to install
+      a beta/pre-release tag (requires the token input), or a fork for testing.
+      Defaults to finopsly-pulse-cli, the public stable-releases repo.
     required: false
-    default: 'finopsly-cli'
+    default: 'finopsly-pulse-cli'
 
 outputs:
   version:

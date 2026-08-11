@@ -12,12 +12,12 @@ const TOOL_NAME = 'finopsly'
 async function run(): Promise<void> {
   const requested = core.getInput('version') || 'latest'
   const token = core.getInput('token') || process.env.GITHUB_TOKEN || ''
-  const repo = core.getInput('repo') || 'finopsly-cli'
+  const repo = core.getInput('repo') || 'finopsly-pulse-cli'
 
   if (!token) {
     throw new Error(
       "No token available — pass 'token' input or ensure GITHUB_TOKEN is set. " +
-        'Required while finopsly-cli is a private repository.',
+        'Required if repo is overridden to the private finopsly-pulse-cli-internal.',
     )
   }
 
