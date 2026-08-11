@@ -55,7 +55,7 @@ function findExpectedChecksum(checksumsText: string, assetName: string): string 
   return undefined
 }
 
-function sha256File(filePath: string): Promise<string> {
+export function sha256File(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256')
     const stream = fs.createReadStream(filePath)
@@ -66,19 +66,17 @@ function sha256File(filePath: string): Promise<string> {
 }
 
 /**
- * Downloads the release asset matching this runner's platform, verifying it
- * against the release's own `checksums.txt` before returning — an
- * unverified downloaded binary would otherwise run directly on every
- * consuming workflow's runner with whatever secrets that workflow has.
- *
- * Private-repo caveat: `browser_download_url` only works unauthenticated,
- * which requires the repo to be public. While a repo is private, we must hit
- * the asset's API `url` field with `Accept: application/octet-stream`
- * instead — GitHub redirects that to a signed, time-limited download URL.
+ * Fetches the release's own `checksums.txt` and returns the expected hash for
+ * assetName. Used both when downloading fresh and when re-verifying a
+ * cache-restored archive — either way we ask the release itself what the
+ * hash should be, rather than trusting a value recorded from an earlier run.
  */
-export async function downloadBinary(version: string, repo: string, token: string): Promise<string> {
-  const assetName = getAssetName()
-
+export async function fetchExpectedChecksum(
+  version: string,
+  repo: string,
+  token: string,
+  assetName: string,
+): Promise<{ expectedHash: string; asset: ReleaseAsset }> {
   const res = await fetch(`https://api.github.com/repos/finopsly/${repo}/releases/tags/${version}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -117,6 +115,48 @@ export async function downloadBinary(version: string, repo: string, token: strin
   if (!expectedHash) {
     throw new Error(`${CHECKSUMS_FILE} has no entry for ${assetName} — refusing to install an unverifiable binary`)
   }
+
+  return { expectedHash, asset }
+}
+
+/**
+ * Verifies filePath's SHA256 against the release's checksums.txt entry for
+ * assetName. Throws on mismatch — used on both the fresh-download path and
+ * the cache-hit path, so a restored archive gets the same real, re-fetched
+ * verification as a brand-new download rather than being trusted just
+ * because it came from our own cache.
+ */
+export async function verifyChecksum(
+  filePath: string,
+  assetName: string,
+  version: string,
+  repo: string,
+  token: string,
+): Promise<void> {
+  const { expectedHash } = await fetchExpectedChecksum(version, repo, token, assetName)
+  const actualHash = await sha256File(filePath)
+  if (actualHash !== expectedHash) {
+    throw new Error(
+      `Checksum mismatch for ${assetName}: expected ${expectedHash}, got ${actualHash} — ` +
+        'the file does not match the release checksums, refusing to use it',
+    )
+  }
+}
+
+/**
+ * Downloads the release asset matching this runner's platform, verifying it
+ * against the release's own `checksums.txt` before returning — an
+ * unverified downloaded binary would otherwise run directly on every
+ * consuming workflow's runner with whatever secrets that workflow has.
+ *
+ * Private-repo caveat: `browser_download_url` only works unauthenticated,
+ * which requires the repo to be public. While a repo is private, we must hit
+ * the asset's API `url` field with `Accept: application/octet-stream`
+ * instead — GitHub redirects that to a signed, time-limited download URL.
+ */
+export async function downloadBinary(version: string, repo: string, token: string): Promise<string> {
+  const assetName = getAssetName()
+  const { expectedHash, asset } = await fetchExpectedChecksum(version, repo, token, assetName)
 
   const downloaded = await tc.downloadTool(asset.url, undefined, `Bearer ${token}`, {
     accept: 'application/octet-stream',

@@ -5,7 +5,7 @@ import * as cache from '@actions/cache'
 import * as exec from '@actions/exec'
 import * as tc from '@actions/tool-cache'
 import { resolveVersion } from './version'
-import { downloadBinary, getAssetName } from './download'
+import { downloadBinary, getAssetName, verifyChecksum } from './download'
 
 const TOOL_NAME = 'finopsly'
 
@@ -29,35 +29,40 @@ async function run(): Promise<void> {
   if (toolPath) {
     core.info(`Tool cache hit: ${TOOL_NAME}@${version}`)
   } else {
-    const cacheKey = `finopsly-ci-${repo}-${process.platform}-${process.arch}-${version}`
+    const assetName = getAssetName()
     const runnerTemp = process.env.RUNNER_TEMP
     if (!runnerTemp) {
       throw new Error('RUNNER_TEMP is not set — this action must run on a GitHub Actions runner')
     }
-    const restorePath = path.join(runnerTemp, 'finopsly-bin')
+    // Cache the raw downloaded archive, not the extracted binary — checksums.txt
+    // has hashes for the archive, so this is what lets a cache hit still be
+    // re-verified against the release's real checksums on every run, not just
+    // trusted because it came from our own cache.
+    const archivePath = path.join(runnerTemp, assetName)
+    const cacheKey = `finopsly-ci-archive-${repo}-${process.platform}-${process.arch}-${version}`
 
-    let extractedDir: string
-    const restoredKey = await cache.restoreCache([restorePath], cacheKey)
-
+    const restoredKey = await cache.restoreCache([archivePath], cacheKey)
     if (restoredKey) {
-      core.info(`Cross-run cache hit: ${cacheKey}`)
-      extractedDir = restorePath
+      core.info(`Cross-run cache hit: ${cacheKey} — re-verifying checksum`)
+      await verifyChecksum(archivePath, assetName, version, repo, token)
     } else {
       core.info('Cache miss — downloading...')
       const downloaded = await downloadBinary(version, repo, token)
-      const assetName = getAssetName()
-      extractedDir = assetName.endsWith('.zip')
-        ? await tc.extractZip(downloaded, restorePath)
-        : await tc.extractTar(downloaded, restorePath)
+      fs.copyFileSync(downloaded, archivePath)
 
       try {
-        await cache.saveCache([restorePath], cacheKey)
+        await cache.saveCache([archivePath], cacheKey)
       } catch (err) {
         // Cache save failures (e.g. quota, permissions on a fork PR) should
-        // never fail the whole run — the binary is already extracted and usable.
+        // never fail the whole run — the archive is already downloaded and usable.
         core.warning(`Could not save to cross-run cache: ${(err as Error).message}`)
       }
     }
+
+    const restorePath = path.join(runnerTemp, 'finopsly-bin')
+    const extractedDir = assetName.endsWith('.zip')
+      ? await tc.extractZip(archivePath, restorePath)
+      : await tc.extractTar(archivePath, restorePath)
 
     // The tarball/zip doesn't reliably preserve the executable bit through
     // extraction on every platform — set it explicitly on non-Windows runners.
