@@ -1,0 +1,38 @@
+name: 'Setup FinOpsly CLI'
+description: 'Install and cache the FinOpsly CLI for use in GitHub Actions workflows'
+author: 'FinOpsly'
+
+inputs:
+  version:
+    description: 'CLI version to install — e.g. v0.5.0-beta.7 or latest'
+    required: false
+    default: 'latest'
+  token:
+    description: >
+      GitHub token with contents:read on the target releases repo.
+      finopsly-pulse-cli (the default repo, stable releases) is public, so
+      the default (github.token) works fine there. REQUIRED if you override
+      repo to finopsly-pulse-cli-internal (beta/pre-release tags) — that repo
+      is private, and github.token is scoped only to the calling workflow's
+      own repo, so it cannot read a different private repo.
+    required: false
+    default: ${{ github.token }}
+  repo:
+    description: >
+      Override the releases repo — e.g. finopsly-pulse-cli-internal to install
+      a beta/pre-release tag (requires the token input), or a fork for testing.
+      Defaults to finopsly-pulse-cli, the public stable-releases repo.
+    required: false
+    default: 'finopsly-pulse-cli'
+
+outputs:
+  version:
+    description: 'Resolved version that was installed'
+
+runs:
+  using: 'node24'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'dollar-sign'
+  color: 'blue'
