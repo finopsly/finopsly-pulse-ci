@@ -42,9 +42,14 @@ jobs:
     needs: typecheck-and-build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # finopsly-pulse-cli (the action's default repo) has no releases yet —
+      # nothing has shipped there. finopsly-pulse-cli-internal is the only repo
+      # with real releases to actually install and smoke-test against right now.
+      # Switch this back to the default once finopsly-pulse-cli has a real release.
       - name: Install a real released version and check it runs
         uses: ./
         with:
           version: latest
+          repo: finopsly-pulse-cli-internal
           token: ${{ secrets.FINOPSLY_INTERNAL_TOKEN }}
       - run: finopsly version
