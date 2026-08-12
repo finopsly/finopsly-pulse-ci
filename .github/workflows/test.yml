@@ -53,3 +53,38 @@ jobs:
           repo: finopsly-pulse-cli-internal
           token: ${{ secrets.FINOPSLY_INTERNAL_TOKEN }}
       - run: finopsly version
+
+      - name: Set up a scratch Terraform dir for the workspace input
+        run: |
+          mkdir -p /tmp/workspace-smoke-test
+          cat > /tmp/workspace-smoke-test/main.tf << 'EOF'
+          terraform {
+            required_providers {
+              aws = { source = "hashicorp/aws", version = "~> 6.0" }
+            }
+          }
+          EOF
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_wrapper: false
+      - name: terraform init (workspace select requires this for remote backends)
+        working-directory: /tmp/workspace-smoke-test
+        run: terraform init -input=false
+
+      - name: Select (and create) a workspace via the action's workspace input
+        uses: ./
+        with:
+          version: latest
+          repo: finopsly-pulse-cli-internal
+          token: ${{ secrets.FINOPSLY_INTERNAL_TOKEN }}
+          workspace: ci-smoke-test
+          working-directory: /tmp/workspace-smoke-test
+      - name: Verify the workspace was actually selected
+        working-directory: /tmp/workspace-smoke-test
+        run: |
+          selected="$(terraform workspace show)"
+          if [ "$selected" != "ci-smoke-test" ]; then
+            echo "::error::expected workspace 'ci-smoke-test', got '$selected'"
+            exit 1
+          fi
+          echo "workspace input correctly selected: $selected"

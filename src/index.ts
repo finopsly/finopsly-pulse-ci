@@ -6,6 +6,7 @@ import * as exec from '@actions/exec'
 import * as tc from '@actions/tool-cache'
 import { resolveVersion } from './version'
 import { downloadBinary, getAssetName, verifyChecksum } from './download'
+import { ensureWorkspace } from './workspace'
 
 const TOOL_NAME = 'finopsly'
 
@@ -83,6 +84,12 @@ async function run(): Promise<void> {
 
   core.setOutput('version', version)
   core.info(`FinOpsly CLI ${version} is ready`)
+
+  const workspace = core.getInput('workspace')
+  if (workspace) {
+    const workingDirectory = core.getInput('working-directory') || '.'
+    await ensureWorkspace(workspace, workingDirectory)
+  }
 }
 
 run().catch((err: Error) => {
