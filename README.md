@@ -56,3 +56,14 @@ npm run build   # esbuild bundle to dist/index.js
 `dist/index.js` must be committed — GitHub Actions runs the compiled bundle directly, not the TypeScript source. `test.yml` fails the build if `dist/` is out of date.
 
 Built with `esbuild` targeting ESM output (not `@vercel/ncc`) — the `@actions/*` toolkit packages moved to ESM-only exports, which `ncc`'s CommonJS-era bundler cannot resolve.
+
+## Releasing
+
+Bump `version` in `package.json`, merge to `development`. `cut-release.yml` picks it up from there automatically:
+
+1. Reads the version from `package.json`.
+2. Refuses to proceed if that version is already released (bump `package.json` and push again).
+3. Tags `vX.Y.Z` and creates the GitHub Release.
+4. `release.yml` (triggered separately by that tag push) moves the floating major tag (e.g. `v1`) to point at it — the [standard GitHub Actions versioning convention](https://github.com/actions/toolkit/blob/main/docs/action-versioning.md), so `uses: finopsly/finopsly-pulse-ci@v1` always resolves to the latest `v1.x.x` without consumers needing to bump anything.
+
+One release channel only, deliberately — unlike `finopsly-pulse-cli-codebase` and `finopsly-pulse-extension`, this action never bakes an environment-specific value (like a backend API URL) into its build, so there's no dev/staging/production content difference to release separately.
