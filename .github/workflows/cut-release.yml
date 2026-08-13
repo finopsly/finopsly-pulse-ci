@@ -1,0 +1,170 @@
+name: Cut Release
+
+# Triggered by a push to development. Reads the version already committed in
+# package.json, refuses to re-cut a version that's already released (bump
+# package.json's version and push again to fix), tags it, and creates the
+# GitHub Release. release.yml (triggered separately by the tag push this
+# produces) then moves the floating major tag on its own — no duplicate
+# logic needed here.
+#
+# One environment only, deliberately — unlike finopsly-pulse-cli-codebase and
+# finopsly-pulse-extension, this action never bakes a backend API URL (or
+# anything else) into its build, so there's no dev/staging/production content
+# difference to release separately. It only downloads a release asset and
+# runs terraform workspace commands at runtime.
+
+on:
+  push:
+    branches:
+      - development
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  cut-release:
+    name: Tag and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Read version from package.json
+        id: read-version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # A real release ships exactly what's committed on development — no
+      # manifest patching here. Refuse to overwrite a version that's already
+      # out. If this fails, bump the version in package.json and push again.
+      - name: Check this version hasn't already been released
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.read-version.outputs.version }}
+        run: |
+          if gh release view "v${VERSION}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::v${VERSION} is already released — bump the version in package.json before pushing to development"
+            exit 1
+          fi
+
+      - name: Tag and create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.read-version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+          gh release create "v${VERSION}" \
+            --repo "${{ github.repository }}" \
+            --title "v${VERSION}" \
+            --generate-notes
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [cut-release]
+    if: ${{ always() && !cancelled() }}
+    steps:
+      - name: Notify Teams (success)
+        if: ${{ needs.cut-release.result == 'success' }}
+        env:
+          TEAMS_WEBHOOK_URL: ${{ vars.TEAMS_PROD_DEPLOY_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TEAMS_WEBHOOK_URL:-}" ]; then
+            echo "TEAMS_PROD_DEPLOY_WEBHOOK_URL is not set; skipping Teams notification."
+            exit 0
+          fi
+
+          VERSION="${{ needs.cut-release.outputs.version }}"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PAYLOAD=$(cat <<EOF
+          {
+            "type": "message",
+            "attachments": [
+              {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                  "\$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                  "type": "AdaptiveCard",
+                  "version": "1.5",
+                  "msTeams": { "width": "Full" },
+                  "body": [
+                    { "type": "TextBlock", "text": "✅ Release published", "weight": "Bolder", "size": "Medium", "wrap": true },
+                    {
+                      "type": "FactSet",
+                      "facts": [
+                        { "title": "Service", "value": "FinOpsly CI (Setup CLI Action)" },
+                        { "title": "Repo", "value": "${GITHUB_REPOSITORY}" },
+                        { "title": "Branch", "value": "${GITHUB_REF_NAME}" },
+                        { "title": "Version", "value": "v${VERSION}" },
+                        { "title": "Actor", "value": "${GITHUB_ACTOR}" }
+                      ]
+                    }
+                  ],
+                  "actions": [
+                    { "type": "Action.OpenUrl", "title": "View workflow run", "url": "${RUN_URL}" }
+                  ]
+                }
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -fsS -H "Content-Type: application/json" -d "${PAYLOAD}" "${TEAMS_WEBHOOK_URL}" >/dev/null
+
+      - name: Notify Teams (failure)
+        if: ${{ needs.cut-release.result == 'failure' }}
+        env:
+          TEAMS_WEBHOOK_URL: ${{ vars.TEAMS_PROD_DEPLOY_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TEAMS_WEBHOOK_URL:-}" ]; then
+            echo "TEAMS_PROD_DEPLOY_WEBHOOK_URL is not set; skipping Teams notification."
+            exit 0
+          fi
+
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PAYLOAD=$(cat <<EOF
+          {
+            "type": "message",
+            "attachments": [
+              {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                  "\$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                  "type": "AdaptiveCard",
+                  "version": "1.5",
+                  "msTeams": { "width": "Full" },
+                  "body": [
+                    { "type": "TextBlock", "text": "❌ Release failed", "weight": "Bolder", "size": "Medium", "wrap": true, "color": "Attention" },
+                    {
+                      "type": "FactSet",
+                      "facts": [
+                        { "title": "Service", "value": "FinOpsly CI (Setup CLI Action)" },
+                        { "title": "Repo", "value": "${GITHUB_REPOSITORY}" },
+                        { "title": "Branch", "value": "${GITHUB_REF_NAME}" },
+                        { "title": "Actor", "value": "${GITHUB_ACTOR}" }
+                      ]
+                    }
+                  ],
+                  "actions": [
+                    { "type": "Action.OpenUrl", "title": "View workflow run", "url": "${RUN_URL}" }
+                  ]
+                }
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -fsS -H "Content-Type: application/json" -d "${PAYLOAD}" "${TEAMS_WEBHOOK_URL}" >/dev/null
