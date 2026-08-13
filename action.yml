@@ -24,6 +24,23 @@ inputs:
       Defaults to finopsly-pulse-cli, the public stable-releases repo.
     required: false
     default: 'finopsly-pulse-cli'
+  workspace:
+    description: >
+      Terraform workspace to select (created via 'terraform workspace new' if
+      it doesn't exist yet) before finopsly estimate runs — lets a FinOpsly
+      environment configured with a workspace() resolve rule match in CI.
+      Requires 'terraform init' to have already run in working-directory, so
+      place this step AFTER your terraform init step, not before. Leave unset
+      to skip entirely — most environments only need path/tags, not workspace.
+    required: false
+    default: ''
+  working-directory:
+    description: >
+      Directory to run 'terraform workspace select/new' in when the workspace
+      input is set. Defaults to the job's working directory (usually the repo
+      root) — set this if your Terraform root is in a subdirectory.
+    required: false
+    default: '.'
 
 outputs:
   version:
