@@ -1,22 +1,41 @@
 # finopsly-pulse-ci
 
-**Install and cache the FinOpsly CLI in a GitHub Actions workflow — one step, instead of a brittle multi-line curl/grep block.**
+**Install the FinOpsly CLI, run a cost + policy estimate, and report the results — configure it, don't write it.**
 
-Same category as [`actions/setup-node`](https://github.com/actions/setup-node) or [`hashicorp/setup-terraform`](https://github.com/hashicorp/setup-terraform): resolves the version you asked for, downloads and verifies it, caches it across runs, and puts it on `PATH` — so the rest of your workflow can just call `finopsly estimate`.
+Same category as [`actions/setup-node`](https://github.com/actions/setup-node) or [`hashicorp/setup-terraform`](https://github.com/hashicorp/setup-terraform) for the install itself, but it goes further: it also runs `finopsly estimate` for you and turns the result into GitHub Code Scanning annotations and a PR comment. A consuming workflow needs no custom SARIF-building or comment-formatting logic of its own — every behavior is a config input, not a script you paste in and maintain.
 
 ## Features
 
 - **One-line install.** Resolves `latest` (or a pinned version) from the [FinOpsly CLI releases](https://github.com/finopsly/finopsly-pulse-cli), no shell scripting required.
 - **Verified downloads.** Every binary is checked against the release's own SHA256 `checksums.txt` — on a fresh download and on a cache hit alike.
 - **Cached across runs.** Skips the download entirely on a warm cache; falls back cleanly to a fresh download if the cache is unavailable (e.g. a fork PR with restricted permissions).
-- **Terraform workspace support.** Optionally selects (or creates) a Terraform workspace before `finopsly estimate` runs, for environments that resolve on workspace rather than path or tags.
+- **Runs the estimate itself.** Calls `finopsly estimate --format json` after installing — you don't write that step.
+- **SARIF reporting, on by default.** Turns policy findings into a SARIF report and uploads it to GitHub Code Scanning (inline annotations on the Files Changed tab). Turn off with `sarif: false`.
+- **PR comments, on by default.** On `pull_request` events, posts/updates a summary comment (cost + policy breakdown) and inline review comments on the exact violating lines. Turn off with `post-comment: false`. No-op outside `pull_request` events.
+- **Terraform workspace support.** Optionally selects (or creates) a Terraform workspace before the estimate runs, for environments that resolve on workspace rather than path or tags — the one signal FinOpsly genuinely can't detect on its own.
 
 ## Usage
 
 ```yaml
+- run: terraform init
 - uses: finopsly/finopsly-pulse-ci@v1
-  with:
-    version: latest   # or a specific tag, e.g. v1.0.0
+  env:
+    AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+    AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    AWS_REGION: ${{ secrets.AWS_REGION }}
+    FINOPSLY_ACCESS_TOKEN: ${{ secrets.FINOPSLY_ACCESS_TOKEN }}
+```
+
+`terraform init` must run first — this action runs the estimate itself, and Terraform needs to be initialized in that directory before it can. Cloud/FinOpsly credentials aren't action inputs; `finopsly estimate` reads them from the environment, so pass them as `env:` on this step exactly as you would any other `run:` step.
+
+The calling workflow needs these permissions for the default (`sarif`/`post-comment` both on):
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write    # for post-comment
+  security-events: write  # for sarif
+  id-token: write         # for the GitHub OIDC leg of CI auth against the FinOpsly backend
 ```
 
 Pin `@v1` rather than `@main` — a branch reference can change under you at any time, whereas `v1` follows [GitHub's own versioning convention](https://github.com/actions/toolkit/blob/main/docs/action-versioning.md) and only ever moves forward to non-breaking `v1.x.x` releases. Pin an exact `v1.2.3` (or a commit SHA) if you need a specific, immutable version.
@@ -31,13 +50,22 @@ Pin `@v1` rather than `@main` — a branch reference can change under you at any
     token: ${{ secrets.FINOPSLY_INTERNAL_TOKEN }}
 ```
 
-If a FinOpsly environment is configured with a `workspace()` resolve rule, select it here — place this step *after* your `terraform init` step (workspace state for remote backends isn't set up until then):
+If a FinOpsly environment is configured with a `workspace()` resolve rule, select it — this runs before the estimate:
 
 ```yaml
 - run: terraform init
 - uses: finopsly/finopsly-pulse-ci@v1
   with:
     workspace: dev   # created via 'terraform workspace new' if it doesn't exist yet
+```
+
+Only want the install and estimate, no reporting (e.g. you post your own custom comment downstream)?
+
+```yaml
+- uses: finopsly/finopsly-pulse-ci@v1
+  with:
+    sarif: false
+    post-comment: false
 ```
 
 ## Inputs
@@ -47,18 +75,27 @@ If a FinOpsly environment is configured with a `workspace()` resolve rule, selec
 | `version` | `latest` | CLI version to install. `latest` resolves the newest release on the target repo. |
 | `token` | `${{ github.token }}` | GitHub token with `contents:read` on the target releases repo. Only required when `repo` is overridden to the private `finopsly-pulse-cli-internal`. |
 | `repo` | `finopsly-pulse-cli` | Override to `finopsly-pulse-cli-internal` for a beta/pre-release tag, or a fork for testing. |
-| `workspace` | *(none)* | Terraform workspace to select (creating it if needed) before `finopsly estimate` runs. Leave unset to skip — most environments only need path/tags, not workspace. |
-| `working-directory` | `.` | Directory to run `terraform workspace select/new` in when `workspace` is set. Change this if your Terraform root is in a subdirectory. |
+| `workspace` | *(none)* | Terraform workspace to select (creating it if needed) before the estimate runs. Leave unset to skip — most environments only need path/tags, not workspace. |
+| `working-directory` | `.` | Terraform root — where workspace select/new and the estimate both run. Change this if your Terraform root is in a subdirectory. |
+| `run-estimate` | `true` | Run `finopsly estimate` after installing. Set to `false` to install only — mainly for testing the install step without live backend credentials; `sarif`/`post-comment` have nothing to report on when this is `false`. |
+| `sarif` | `true` | Generate + upload a SARIF report from policy findings. Requires `security-events: write`. |
+| `post-comment` | `true` | Post/update a PR summary comment + inline review comments. Requires `pull-requests: write`. No-op outside `pull_request` events. |
 
 ## Outputs
 
 | Output | Description |
 |---|---|
 | `version` | The resolved version that was actually installed. |
+| `verdict` | Policy verdict from the scan — `pass` or `fail`. |
+| `blocked` | `'true'` if the scan was blocked by policy or budget enforcement, else `'false'`. |
+| `block-reason` | Human-readable reason the scan was blocked, when `blocked` is `'true'`. |
+| `sarif-file` | Path to the generated SARIF file, when `sarif` is enabled. |
+
+A blocked scan fails this step (after SARIF/PR-comment reporting has already run, so results are always visible even on a block) — same as a failed step anywhere else in your job.
 
 ## Privacy and data
 
-This action talks to two places, and no others: the GitHub API (to resolve and download a release asset) and, if `workspace` is set, your local `terraform` binary. It never contacts the FinOpsly backend and sends no data to FinOpsly — cost and policy data only leaves your runner once your workflow's own `finopsly estimate` step runs, which is a separate action entirely.
+This action talks to: the GitHub API (to resolve/download the CLI release, and — when enabled — to upload SARIF and post PR comments on the calling repo), your local `terraform` binary (only if `workspace` is set), and the FinOpsly backend (via the `finopsly estimate` call this action makes on your behalf, using whatever `FINOPSLY_ACCESS_TOKEN`/cloud credentials you passed via `env:`). It never sends anything to FinOpsly beyond what `finopsly estimate` itself would send if you ran it directly.
 
 ## Development
 
