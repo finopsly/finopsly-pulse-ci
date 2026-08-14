@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0]
+
 ### Added
 - The action now runs `finopsly estimate` itself after installing the CLI,
   instead of leaving that to the calling workflow.
@@ -14,12 +16,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `post-comment` input (default `true`) — posts/updates a PR summary comment
   and inline review comments on `pull_request` events, with no custom
   workflow logic required. No-op outside `pull_request` events.
+- `run-estimate` input (default `true`) — set to `false` to install only,
+  mainly for testing the install step without live backend credentials.
 - `version`, `verdict`, `blocked`, `block-reason`, `sarif-file` outputs.
-- Automated release pipeline (`cut-release.yml`): pushing to `development`
-  reads the version from `package.json`, refuses to re-cut a version that's
-  already released, tags it, publishes the GitHub Release, and moves the
-  floating major tag — no manual tagging step required.
-- Microsoft Teams notification on release success/failure.
 
 ### Changed
 - `runs.using` switched from a plain `node24` action to `composite`, so the
@@ -38,3 +37,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Terraform workspace via `terraform workspace select`/`new` before
   `finopsly estimate` runs, for FinOpsly environments that resolve on
   workspace rather than path or tags.
+- Automated release pipeline (`cut-release.yml`): pushing to `development`
+  reads the version from `package.json`, refuses to re-cut a version that's
+  already released, tags it, publishes the GitHub Release, and moves the
+  floating major tag — no manual tagging step required.
+- Microsoft Teams notification on release success/failure.
