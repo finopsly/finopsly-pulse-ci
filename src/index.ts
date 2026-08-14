@@ -11,6 +11,7 @@ import { getInput, getBooleanInput } from './inputs'
 import { runEstimate } from './estimate'
 import { writeSarifFile, type Finding } from './sarif'
 import { buildPrCommentBody, upsertPrComment, postInlineReviewComments } from './comment'
+import { locateResources } from './resourcelocator'
 
 const TOOL_NAME = 'finopsly'
 
@@ -118,6 +119,18 @@ async function run(): Promise<void> {
 
   const findings = (result.data?.policy?.findings ?? []) as Finding[]
 
+  const located = locateResources(findings.map((f) => f.resourceAddress), workingDirectory)
+  for (const f of findings) {
+    const loc = located.get(f.resourceAddress)
+    if (loc && !f.filePath) {
+      f.filePath = loc.filePath
+      f.line = loc.line
+    }
+  }
+  if (located.size > 0) {
+    core.info(`Resolved real source position for ${located.size}/${findings.length} finding(s) via local .tf search`)
+  }
+
   let sarifDoc: unknown
   if (wantSarif) {
     const runnerTemp = process.env.RUNNER_TEMP
@@ -125,7 +138,7 @@ async function run(): Promise<void> {
       throw new Error('RUNNER_TEMP is not set — this action must run on a GitHub Actions runner')
     }
     const sarifPath = path.join(runnerTemp, 'finopsly.sarif')
-    const written = writeSarifFile(sarifPath, findings)
+    const written = writeSarifFile(sarifPath, findings, result.data?.budget)
     sarifDoc = written.sarif
     core.info(`SARIF: ${written.resultCount} finding(s), ${written.ruleCount} rule(s)`)
     core.setOutput('sarif-file', sarifPath)
@@ -139,7 +152,9 @@ async function run(): Promise<void> {
     } else if (!repoToken) {
       core.warning('post-comment is enabled but no GITHUB_TOKEN was available — skipping PR comment')
     } else {
-      const { body } = buildPrCommentBody(result.data)
+      const [owner, repo] = (process.env.GITHUB_REPOSITORY || '/').split('/')
+      const ctx = owner && repo ? { owner, repo, prNumber: pr.number } : undefined
+      const { body } = buildPrCommentBody(result.data, ctx)
       await upsertPrComment(repoToken, pr.number, body)
       if (wantSarif && sarifDoc) {
         const posted = await postInlineReviewComments(repoToken, pr.number, pr.headSha, sarifDoc)

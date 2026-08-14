@@ -25,10 +25,24 @@ function classifyKind(actions?: string[]): string {
   return actions[0]
 }
 
-export function buildPrCommentBody(estimateData: unknown): { body: string; policyBlocked: boolean } {
+export interface CommentContext {
+  owner: string
+  repo: string
+  prNumber: number
+}
+
+function budgetState(v?: { state?: string | null } | null): string | null {
+  return v?.state ?? null
+}
+
+export function buildPrCommentBody(
+  estimateData: unknown,
+  ctx?: CommentContext,
+): { body: string; policyBlocked: boolean } {
   const data = estimateData as any
   const cost = data.cost ?? data
   const policy = data.policy ?? null
+  const budget = data.budget ?? null
 
   const total = cost.total_monthly_cost ?? 0
   const netDelta = cost.net_monthly_delta ?? 0
@@ -78,6 +92,23 @@ export function buildPrCommentBody(estimateData: unknown): { body: string; polic
     if (counts.warn > 0) policyCell += `⚠ ${counts.warn} warnings`
     if (!counts.block && !counts.warn) policyCell = `✓ All passed`
     body += `| Policy (${modeLabel}${envLabel}) | ${policyCell} |\n`
+  }
+  if (budget) {
+    const budgetModeLabel = budget.mode === 'enforce' ? 'enforce' : 'evaluate'
+    const parts: string[] = []
+    if (budget.environment) {
+      const st = budgetState(budget.environment)
+      const sym = st === 'block' ? '✗' : st === 'warn' ? '⚠' : '✓'
+      parts.push(`${sym} env ${money(budget.environment.spend)}/${money(budget.environment.cap)}`)
+    }
+    if (budget.global) {
+      const st = budgetState(budget.global)
+      const sym = st === 'block' ? '✗' : st === 'warn' ? '⚠' : '✓'
+      parts.push(`${sym} org ${money(budget.global.spend)}/${money(budget.global.cap)}`)
+    }
+    if (parts.length > 0) {
+      body += `| Budget (${budgetModeLabel}) | ${parts.join(' · ')} |\n`
+    }
   }
   body += `\n`
 
@@ -148,7 +179,10 @@ export function buildPrCommentBody(estimateData: unknown): { body: string; polic
     body += `---\n\n`
   }
 
-  body += `<sub>Inline annotations visible in the <strong>Files changed</strong> tab · Estimates are indicative AWS on-demand public list prices · Updated on each push</sub>`
+  const scanLink = ctx
+    ? `[View full Code Scanning results](https://github.com/${ctx.owner}/${ctx.repo}/security/code-scanning?query=pr%3A${ctx.prNumber}+is%3Aopen) · `
+    : ''
+  body += `<sub>${scanLink}Inline annotations visible in the <strong>Files changed</strong> tab · Estimates are indicative AWS on-demand public list prices · Updated on each push</sub>`
 
   return { body, policyBlocked }
 }

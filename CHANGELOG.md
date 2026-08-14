@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Budget status (per-environment + org-wide cap/spend/state) now shown in the PR comment summary table and, when a threshold is crossed, as a SARIF result.
+- A link to the PR's full GitHub Code Scanning results in the PR comment footer.
+- Best-effort real `filePath`/`line` resolution for findings — a plain-text search for each resource's declaration across the working directory's `.tf` files (not an HCL parser). Enables real SARIF inline annotations and inline PR review comments for plain, non-module resources; module-nested resources still fall back to the previous placeholder rather than risk a wrong location.
+
 ## [1.1.0]
 
 ### Added
