@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0]
+
 ### Added
 - Budget status (per-environment + org-wide cap/spend/state) now shown in the PR comment summary table and, when a threshold is crossed, as a SARIF result.
 - A link to the PR's full GitHub Code Scanning results in the PR comment footer.
