@@ -76,11 +76,11 @@ jobs:
       - name: Notify Teams (success)
         if: ${{ needs.cut-release.result == 'success' }}
         env:
-          TEAMS_WEBHOOK_URL: ${{ vars.TEAMS_PROD_DEPLOY_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL: ${{ vars.TEAMS_PUBLIC_CI_WEBHOOK_URL }}
         run: |
           set -euo pipefail
           if [ -z "${TEAMS_WEBHOOK_URL:-}" ]; then
-            echo "TEAMS_PROD_DEPLOY_WEBHOOK_URL is not set; skipping Teams notification."
+            echo "TEAMS_PUBLIC_CI_WEBHOOK_URL is not set; skipping Teams notification."
             exit 0
           fi
 
@@ -125,11 +125,11 @@ jobs:
       - name: Notify Teams (failure)
         if: ${{ needs.cut-release.result == 'failure' }}
         env:
-          TEAMS_WEBHOOK_URL: ${{ vars.TEAMS_PROD_DEPLOY_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL: ${{ vars.TEAMS_PUBLIC_CI_WEBHOOK_URL }}
         run: |
           set -euo pipefail
           if [ -z "${TEAMS_WEBHOOK_URL:-}" ]; then
-            echo "TEAMS_PROD_DEPLOY_WEBHOOK_URL is not set; skipping Teams notification."
+            echo "TEAMS_PUBLIC_CI_WEBHOOK_URL is not set; skipping Teams notification."
             exit 0
           fi
 
