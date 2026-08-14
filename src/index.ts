@@ -7,22 +7,26 @@ import * as tc from '@actions/tool-cache'
 import { resolveVersion } from './version'
 import { downloadBinary, getAssetName, verifyChecksum } from './download'
 import { ensureWorkspace } from './workspace'
+import { getInput, getBooleanInput } from './inputs'
+import { runEstimate } from './estimate'
+import { writeSarifFile, type Finding } from './sarif'
+import { buildPrCommentBody, upsertPrComment, postInlineReviewComments } from './comment'
 
 const TOOL_NAME = 'finopsly'
 
-async function run(): Promise<void> {
-  const requested = core.getInput('version') || 'latest'
-  const token = core.getInput('token') || process.env.GITHUB_TOKEN || ''
-  const repo = core.getInput('repo') || 'finopsly-pulse-cli'
+async function installCli(): Promise<string> {
+  const requested = getInput('version') || 'latest'
+  const releaseToken = getInput('token') || process.env.GITHUB_TOKEN || ''
+  const repo = getInput('repo') || 'finopsly-pulse-cli'
 
-  if (!token) {
+  if (!releaseToken) {
     throw new Error(
       "No token available — pass 'token' input or ensure GITHUB_TOKEN is set. " +
         'Required if repo is overridden to the private finopsly-pulse-cli-internal.',
     )
   }
 
-  const version = await resolveVersion(requested, repo, token)
+  const version = await resolveVersion(requested, repo, releaseToken)
   core.info(`Setting up FinOpsly CLI ${version} from finopsly/${repo}`)
 
   let toolPath = tc.find(TOOL_NAME, version)
@@ -35,27 +39,21 @@ async function run(): Promise<void> {
     if (!runnerTemp) {
       throw new Error('RUNNER_TEMP is not set — this action must run on a GitHub Actions runner')
     }
-    // Cache the raw downloaded archive, not the extracted binary — checksums.txt
-    // has hashes for the archive, so this is what lets a cache hit still be
-    // re-verified against the release's real checksums on every run, not just
-    // trusted because it came from our own cache.
     const archivePath = path.join(runnerTemp, assetName)
     const cacheKey = `finopsly-ci-archive-${repo}-${process.platform}-${process.arch}-${version}`
 
     const restoredKey = await cache.restoreCache([archivePath], cacheKey)
     if (restoredKey) {
       core.info(`Cross-run cache hit: ${cacheKey} — re-verifying checksum`)
-      await verifyChecksum(archivePath, assetName, version, repo, token)
+      await verifyChecksum(archivePath, assetName, version, repo, releaseToken)
     } else {
       core.info('Cache miss — downloading...')
-      const downloaded = await downloadBinary(version, repo, token)
+      const downloaded = await downloadBinary(version, repo, releaseToken)
       fs.copyFileSync(downloaded, archivePath)
 
       try {
         await cache.saveCache([archivePath], cacheKey)
       } catch (err) {
-        // Cache save failures (e.g. quota, permissions on a fork PR) should
-        // never fail the whole run — the archive is already downloaded and usable.
         core.warning(`Could not save to cross-run cache: ${(err as Error).message}`)
       }
     }
@@ -65,8 +63,6 @@ async function run(): Promise<void> {
       ? await tc.extractZip(archivePath, restorePath)
       : await tc.extractTar(archivePath, restorePath)
 
-    // The tarball/zip doesn't reliably preserve the executable bit through
-    // extraction on every platform — set it explicitly on non-Windows runners.
     if (process.platform !== 'win32') {
       fs.chmodSync(path.join(extractedDir, TOOL_NAME), 0o755)
     }
@@ -76,19 +72,88 @@ async function run(): Promise<void> {
 
   core.addPath(toolPath)
 
-  // Verify the binary actually runs before declaring success — a corrupt
-  // download or wrong-arch asset should fail loudly here, not silently
-  // surface later as a confusing error in the user's own workflow steps.
   const binPath = path.join(toolPath, process.platform === 'win32' ? `${TOOL_NAME}.exe` : TOOL_NAME)
   await exec.exec(binPath, ['version'])
 
   core.setOutput('version', version)
   core.info(`FinOpsly CLI ${version} is ready`)
+  return binPath
+}
 
-  const workspace = core.getInput('workspace')
+interface PullRequestEvent {
+  pull_request?: { number?: number; head?: { sha?: string } }
+}
+
+function currentPullRequest(): { number: number; headSha: string } | null {
+  if (process.env.GITHUB_EVENT_NAME !== 'pull_request') return null
+  const eventPath = process.env.GITHUB_EVENT_PATH
+  if (!eventPath) return null
+  const event = JSON.parse(fs.readFileSync(eventPath, 'utf8')) as PullRequestEvent
+  const number = event.pull_request?.number
+  const headSha = event.pull_request?.head?.sha
+  if (!number || !headSha) return null
+  return { number, headSha }
+}
+
+async function run(): Promise<void> {
+  const binPath = await installCli()
+  const workingDirectory = getInput('working-directory') || '.'
+
+  const workspace = getInput('workspace')
   if (workspace) {
-    const workingDirectory = core.getInput('working-directory') || '.'
     await ensureWorkspace(workspace, workingDirectory)
+  }
+
+  if (!getBooleanInput('run-estimate', true)) {
+    core.info('run-estimate is false — CLI installed, skipping estimate/sarif/post-comment')
+    core.setOutput('blocked', 'false')
+    return
+  }
+
+  const wantSarif = getBooleanInput('sarif', true)
+  const wantComment = getBooleanInput('post-comment', true)
+
+  const result = await runEstimate(binPath, workingDirectory)
+  core.setOutput('verdict', result.verdict ?? '')
+
+  const findings = (result.data?.policy?.findings ?? []) as Finding[]
+
+  let sarifDoc: unknown
+  if (wantSarif) {
+    const runnerTemp = process.env.RUNNER_TEMP
+    if (!runnerTemp) {
+      throw new Error('RUNNER_TEMP is not set — this action must run on a GitHub Actions runner')
+    }
+    const sarifPath = path.join(runnerTemp, 'finopsly.sarif')
+    const written = writeSarifFile(sarifPath, findings)
+    sarifDoc = written.sarif
+    core.info(`SARIF: ${written.resultCount} finding(s), ${written.ruleCount} rule(s)`)
+    core.setOutput('sarif-file', sarifPath)
+  }
+
+  if (wantComment) {
+    const pr = currentPullRequest()
+    const repoToken = process.env.GITHUB_TOKEN || ''
+    if (!pr) {
+      core.info('post-comment is enabled but this is not a pull_request event — skipping')
+    } else if (!repoToken) {
+      core.warning('post-comment is enabled but no GITHUB_TOKEN was available — skipping PR comment')
+    } else {
+      const { body } = buildPrCommentBody(result.data)
+      await upsertPrComment(repoToken, pr.number, body)
+      if (wantSarif && sarifDoc) {
+        const posted = await postInlineReviewComments(repoToken, pr.number, pr.headSha, sarifDoc)
+        core.info(`Posted ${posted} inline review comment(s)`)
+      }
+    }
+  }
+
+  core.setOutput('blocked', result.blocked ? 'true' : 'false')
+  if (result.blocked) {
+    core.setOutput('block-reason', result.blockReason)
+    // Reports above must still complete before failing — mirrors the previous
+    // continue-on-error + late setFailed pattern in the calling workflow.
+    core.setFailed(result.blockReason)
   }
 }
 

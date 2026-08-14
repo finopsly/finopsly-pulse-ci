@@ -46,12 +46,17 @@ jobs:
       # nothing has shipped there. finopsly-pulse-cli-internal is the only repo
       # with real releases to actually install and smoke-test against right now.
       # Switch this back to the default once finopsly-pulse-cli has a real release.
+      # run-estimate: false — this job has no live FinOpsly backend
+      # credentials to give it; it's only exercising the install mechanics.
+      # The real estimate/sarif/post-comment path is exercised end-to-end by
+      # finopsly-pulse-testing's own workflow, which does have real credentials.
       - name: Install a real released version and check it runs
         uses: ./
         with:
           version: latest
           repo: finopsly-pulse-cli-internal
           token: ${{ secrets.FINOPSLY_INTERNAL_TOKEN }}
+          run-estimate: false
       - run: finopsly version
 
       - name: Set up a scratch Terraform dir for the workspace input
@@ -79,6 +84,7 @@ jobs:
           token: ${{ secrets.FINOPSLY_INTERNAL_TOKEN }}
           workspace: ci-smoke-test
           working-directory: /tmp/workspace-smoke-test
+          run-estimate: false
       - name: Verify the workspace was actually selected
         working-directory: /tmp/workspace-smoke-test
         run: |

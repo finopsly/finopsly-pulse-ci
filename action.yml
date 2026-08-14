@@ -1,5 +1,5 @@
 name: 'Setup FinOpsly CLI'
-description: 'Install and cache the FinOpsly CLI for use in GitHub Actions workflows'
+description: 'Install the FinOpsly CLI, run a cost + policy estimate, and report results (SARIF + PR comments) — no custom workflow logic required'
 author: 'FinOpsly'
 
 inputs:
@@ -29,26 +29,79 @@ inputs:
       Terraform workspace to select (created via 'terraform workspace new' if
       it doesn't exist yet) before finopsly estimate runs — lets a FinOpsly
       environment configured with a workspace() resolve rule match in CI.
-      Requires 'terraform init' to have already run in working-directory, so
-      place this step AFTER your terraform init step, not before. Leave unset
-      to skip entirely — most environments only need path/tags, not workspace.
+      Requires 'terraform init' to have already run in working-directory.
+      Leave unset to skip — this is the one signal FinOpsly cannot detect on
+      its own; path and tags resolve automatically from the plan itself.
     required: false
     default: ''
   working-directory:
     description: >
-      Directory to run 'terraform workspace select/new' in when the workspace
-      input is set. Defaults to the job's working directory (usually the repo
-      root) — set this if your Terraform root is in a subdirectory.
+      Terraform root directory — where 'terraform workspace select/new' and
+      'finopsly estimate' both run. Defaults to the job's working directory
+      (usually the repo root); set this if your Terraform root is in a
+      subdirectory.
     required: false
     default: '.'
+  run-estimate:
+    description: >
+      Run 'finopsly estimate' after installing the CLI. Set to 'false' to
+      install only — mainly useful for testing the install step itself
+      without a live backend/credentials available. sarif/post-comment have
+      nothing to report on when this is false. Most workflows should leave
+      this at the default.
+    required: false
+    default: 'true'
+  sarif:
+    description: >
+      Generate a SARIF report from policy findings and upload it to GitHub
+      Code Scanning (inline annotations on the Files Changed tab). Requires
+      the calling workflow to grant 'security-events: write'. Set to 'false'
+      to skip.
+    required: false
+    default: 'true'
+  post-comment:
+    description: >
+      On pull_request events, post/update a summary PR comment (cost + policy
+      breakdown) and inline review comments on the exact violating lines.
+      Requires the calling workflow to grant 'pull-requests: write'. Set to
+      'false' to skip. No-op outside pull_request events.
+    required: false
+    default: 'true'
 
 outputs:
   version:
-    description: 'Resolved version that was installed'
+    description: 'Resolved CLI version that was installed'
+    value: ${{ steps.run.outputs.version }}
+  verdict:
+    description: "Policy verdict from the scan — 'pass' or 'fail'"
+    value: ${{ steps.run.outputs.verdict }}
+  blocked:
+    description: "'true' if the scan was blocked by policy or budget enforcement (exit 5/6), else 'false'"
+    value: ${{ steps.run.outputs.blocked }}
+  block-reason:
+    description: 'Human-readable reason the scan was blocked, when blocked is true'
+    value: ${{ steps.run.outputs.block-reason }}
+  sarif-file:
+    description: 'Path to the generated SARIF file, when sarif is enabled'
+    value: ${{ steps.run.outputs.sarif-file }}
 
 runs:
-  using: 'node24'
-  main: 'dist/index.js'
+  using: 'composite'
+  steps:
+    - name: Install CLI, run estimate, build reports
+      id: run
+      shell: bash
+      run: node ${{ github.action_path }}/dist/index.js
+      env:
+        FINOPSLY_CI_INPUTS_JSON: ${{ toJSON(inputs) }}
+        GITHUB_TOKEN: ${{ github.token }}
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: always() && inputs.sarif == 'true' && steps.run.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+      with:
+        sarif_file: ${{ steps.run.outputs.sarif-file }}
+        category: fi-pulse
 
 branding:
   icon: 'dollar-sign'
