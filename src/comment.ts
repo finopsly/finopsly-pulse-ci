@@ -3,6 +3,17 @@ import type { Finding } from './sarif'
 
 const MARKER = '<!-- finopsly-cost-estimate -->'
 
+// Mirrors the backend's reserved Global Posture "Budget" pillar catalog ID
+// (policy/posture_catalog.py's POSTURE_BUDGET_CATALOG_ID). This finding is
+// stored as a policy finding today, but it's conceptually budget, not a
+// Terraform/security policy — kept out of Policy counts/findings and shown
+// in its own section instead.
+const BUDGET_POSTURE_POLICY_ID = 'FP.EC2.AWS.120'
+
+function isBudgetPillarFinding(f: Finding): boolean {
+  return f.policyId === BUDGET_POSTURE_POLICY_ID
+}
+
 function money(v: number | null | undefined): string {
   return v == null ? '—' : `$${Math.abs(v).toFixed(2)}`
 }
@@ -46,16 +57,31 @@ export function buildPrCommentBody(
 
   const total = cost.total_monthly_cost ?? 0
   const netDelta = cost.net_monthly_delta ?? 0
-  const counts = policy?.counts ?? {}
   const mode = policy?.mode ?? null
   const env = policy?.environment ?? null
   const policyBlocked = policy?.verdict === 'fail' && mode === 'enforce'
+
+  const allFindings = (policy?.findings ?? []) as Finding[]
+  const budgetFindings = allFindings.filter(isBudgetPillarFinding)
+  const policyFindings = allFindings.filter((f) => !isBudgetPillarFinding(f))
+
+  // Recomputed from policy-only findings, not the backend's aggregate
+  // policy.counts — that count includes the budget-pillar finding too, and
+  // showing it in both the Policy row and the Budget section would be a
+  // confusing double-count.
+  const counts = { block: 0, warn: 0, info: 0 }
+  for (const f of policyFindings) {
+    const effective = f.effectiveAction ?? f.action
+    if (effective === 'block') counts.block++
+    else if (effective === 'warn') counts.warn++
+    else counts.info++
+  }
 
   const estimates = cost.estimates ?? []
   const changed = estimates.filter((r: { is_no_op?: boolean }) => !r.is_no_op)
 
   const byResource: Record<string, Finding[]> = {}
-  for (const f of (policy?.findings ?? []) as Finding[]) {
+  for (const f of policyFindings) {
     ;(byResource[f.resourceAddress] ??= []).push(f)
   }
 
@@ -118,6 +144,18 @@ export function buildPrCommentBody(
   if (cost.warnings?.length) {
     for (const w of cost.warnings) body += `> ⚠ ${w}\n`
     body += '\n'
+  }
+
+  if (budgetFindings.length > 0) {
+    body += `### Budget\n\n`
+    for (const f of budgetFindings) {
+      const sev = sevSymbol[f.severity ?? ''] ?? '[low]'
+      const act = actSymbol[f.effectiveAction ?? f.action] ?? '⚠'
+      body += `${act} \`${f.policyId}\` · ${sev}\n`
+      body += `> ${f.message}\n`
+      if (f.suggestedFix) body += `> **Fix:** ${f.suggestedFix}\n`
+      body += `\n`
+    }
   }
 
   body += `---\n\n### Resources\n\n`

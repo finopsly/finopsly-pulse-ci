@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Budget status (per-environment + org-wide cap/spend/state) now shown in the PR comment summary table and, when a threshold is crossed, as a SARIF result.
 - A link to the PR's full GitHub Code Scanning results in the PR comment footer.
 - Best-effort real `filePath`/`line` resolution for findings — a plain-text search for each resource's declaration across the working directory's `.tf` files (not an HCL parser). Enables real SARIF inline annotations and inline PR review comments for plain, non-module resources; module-nested resources still fall back to the previous placeholder rather than risk a wrong location.
+- The Global Posture "Budget" pillar finding (`FP.EC2.AWS.120`) now renders under its own "Budget" section in the PR comment, excluded from Policy's counts/findings list — previously it was folded into Policy's tally, and (since its `resourceAddress` is `(plan-wide)`, not a real resource) its message/fix text never appeared anywhere in the comment at all.
 
 ## [1.1.0]
 
