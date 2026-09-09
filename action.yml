@@ -1,5 +1,5 @@
 name: 'Setup FinOpsly CLI'
-description: 'Install the FinOpsly CLI, run a cost + policy estimate, and report results (SARIF + PR comments) — no custom workflow logic required'
+description: 'Install the FinOpsly CLI, run a cost + policy estimate, and report results (SARIF + PR comments)'
 author: 'FinOpsly'
 
 inputs:
