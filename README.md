@@ -111,7 +111,7 @@ Built with `esbuild` targeting ESM output (not `@vercel/ncc`) — the `@actions/
 
 ## Releasing
 
-Bump `version` in `package.json` and merge to `development`. `cut-release.yml` picks it up from there automatically:
+Bump `version` in `package.json` and merge to `main`. `cut-release.yml` picks it up from there automatically:
 
 1. Reads the version from `package.json`.
 2. Refuses to proceed if that version is already released (bump `package.json` and push again).
