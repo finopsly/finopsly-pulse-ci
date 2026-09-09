@@ -1,6 +1,6 @@
 {
   "name": "finopsly-ci",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "type": "module",
   "description": "Install and cache the FinOpsly CLI for use in GitHub Actions workflows",
