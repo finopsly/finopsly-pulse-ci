@@ -116,7 +116,7 @@ Bump `version` in `package.json` and merge to `development`. `cut-release.yml` p
 1. Reads the version from `package.json`.
 2. Refuses to proceed if that version is already released (bump `package.json` and push again).
 3. Tags `vX.Y.Z` and creates the GitHub Release.
-4. `release.yml` (triggered separately by that tag push) moves the floating major tag (e.g. `v1`) to point at it, so `uses: finopsly/finopsly-pulse-ci@v1` always resolves to the latest `v1.x.x` without consumers needing to bump anything.
+4. Moves the floating major tag (e.g. `v1`) to point at it, so `uses: finopsly/finopsly-pulse-ci@v1` always resolves to the latest `v1.x.x` without consumers needing to bump anything. Done in this same job — GitHub's `GITHUB_TOKEN` recursion guard means a second, separately-triggered workflow can never fire off this job's own tag push or release creation.
 
 One release channel only, deliberately — unlike `finopsly-pulse-cli-codebase` and `finopsly-pulse-extension`, this action never bakes an environment-specific value (like a backend API URL) into its build, so there's no dev/staging/production content difference to release separately.
 
