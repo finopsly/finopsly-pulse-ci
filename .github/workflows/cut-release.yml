@@ -2,10 +2,17 @@ name: Cut Release
 
 # Triggered by a push to development. Reads the version already committed in
 # package.json, refuses to re-cut a version that's already released (bump
-# package.json's version and push again to fix), tags it, and creates the
-# GitHub Release. release.yml (triggered separately by the tag push this
-# produces) then moves the floating major tag on its own — no duplicate
-# logic needed here.
+# package.json's version and push again to fix), tags it, creates the GitHub
+# Release, and moves the floating major tag (e.g. v1) in this same job.
+#
+# The major-tag move used to live in a separate release.yml, triggered by
+# this job's own tag push. That never worked: both the tag push and the
+# release creation above use secrets.GITHUB_TOKEN, and GitHub's recursion
+# guard blocks a GITHUB_TOKEN-driven push/release from triggering any other
+# workflow (workflow_dispatch/repository_dispatch are the only exceptions).
+# release.yml had zero runs, ever, and v1 silently pointed at a stale commit
+# until someone noticed and re-pointed it by hand. Doing the move here avoids
+# needing a second workflow — or a real PAT — entirely.
 #
 # One environment only, deliberately — unlike finopsly-pulse-cli-codebase and
 # finopsly-pulse-extension, this action never bakes a backend API URL (or
@@ -67,6 +74,18 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "v${VERSION}" \
             --generate-notes
+
+      # Standard GitHub Actions convention: consumers pin `uses: .../finopsly-pulse-ci@v1`
+      # and expect it to always resolve to the latest v1.x.x release. Only ever move the
+      # major tag to match this release's own major version, so a future v2.0.0 (a
+      # breaking change) doesn't silently repoint v1 out from under existing consumers.
+      - name: Move floating major tag
+        env:
+          VERSION: ${{ steps.read-version.outputs.version }}
+        run: |
+          major="v$(echo "${VERSION}" | cut -d. -f1)"
+          git tag -fa "$major" -m "Update $major to v${VERSION}"
+          git push origin "$major" --force
 
   notify:
     runs-on: ubuntu-latest
